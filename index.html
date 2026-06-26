@@ -109,6 +109,22 @@
   .filt{flex:1;min-width:90px;padding:9px 10px;font-size:13px;border-radius:10px;
     border:1px solid var(--line);background:var(--card);color:var(--muted);font-weight:600}
   .filt.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+  .pnl-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+  .pnl-cell{background:var(--bg);border-radius:10px;padding:8px 10px}
+  .pnl-cell label{display:block;font-size:11px;color:var(--muted)}
+  .pnl-cell b{font-size:15px;font-weight:600}
+  .pnl-cell b.g{color:var(--green)} .pnl-cell b.r{color:var(--danger)}
+  .pnl-profit{display:flex;justify-content:space-between;align-items:center;
+    padding:11px 12px;border-radius:10px;font-weight:600;font-size:15px}
+  .pnl-profit.pos{background:var(--green-soft);color:var(--green)}
+  .pnl-profit.neg{background:#fbeee9;color:var(--danger)}
+  .pnl-profit b{font-size:17px}
+  .pnl-hint{margin-top:10px;font-size:13px;color:var(--accent);cursor:pointer;text-align:center}
+  .exp-row{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 0;border-bottom:1px solid var(--line)}
+  .exp-row:last-child{border-bottom:none}
+  .amt.r{color:var(--danger)}
+  @media(max-width:480px){.pnl-grid{grid-template-columns:repeat(2,1fr)}}
   .owe{display:flex;justify-content:space-between;align-items:center;padding:12px 4px;
     border-bottom:1px solid var(--line);cursor:pointer}
   .owe:last-child{border-bottom:none}
@@ -193,6 +209,31 @@
   <label class="fld">Type <b>VOID</b> to confirm</label>
   <input class="in" id="voidConfirm" placeholder="VOID" autocomplete="off" oninput="checkVoid()">
   <div style="margin-top:14px"><button class="btn-danger" id="voidBtn" disabled onclick="doVoid()">Void entry</button></div>
+</dialog>
+
+<dialog id="expDlg">
+  <button class="x" onclick="expDlg.close()">&times;</button>
+  <p class="dlg-title">Costs · <span id="expMonth"></span></p>
+  <p class="muted">Total this month: ₹<b id="expTotal">0</b></p>
+  <div class="two">
+    <div><label class="fld">Date</label><input class="in" type="date" id="exDate"></div>
+    <div><label class="fld">Amount</label><input class="in" type="number" id="exAmt" step="0.01" inputmode="decimal"></div>
+  </div>
+  <label class="fld">Category</label>
+  <select class="in" id="exCat">
+    <option>Driver</option><option>Fuel</option><option>Maintenance</option>
+    <option>Loading</option><option>Rent</option><option>Other</option>
+  </select>
+  <label class="fld">Notes (optional)</label>
+  <input class="in" id="exNotes" placeholder="e.g. June salary, trip to site B">
+  <div style="margin-top:12px"><button class="btn-pay" onclick="addExpense()">Add cost</button></div>
+  <div id="expList" style="margin-top:14px"></div>
+</dialog>
+
+<dialog id="pnlDlg">
+  <button class="x" onclick="pnlDlg.close()">&times;</button>
+  <p class="dlg-title">Monthly P&amp;L history</p>
+  <div id="pnlBody" style="margin-top:8px"></div>
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -455,59 +496,142 @@ async function restore(type,id){
   viewCustomer(currentCustomer);
 }
 
-let homeOwing=[], homeFilter=0;   // homeFilter = min days pending (0/10/20)
+let homeAll=[], homeFilter='all', homePnl=[];   // filter: all | pending | d10 | d20
+
+function curMonth(){ return new Date().toISOString().slice(0,7); }
 
 async function showHome(){
-  currentCustomer=null; homeFilter=0;
+  currentCustomer=null; homeFilter='all';
   if(!sb){ $('main').innerHTML=''; return; }
   $('main').innerHTML='<div class="empty">Loading dashboard…</div>';
-  const {data,error}=await sb.from('customer_balance').select('*');
-  if(error){ $('main').innerHTML=`<div class="card">Couldn't load dashboard: ${error.message}</div>`; return; }
+  const [{data:bal,error:e1},{data:pnl,error:e2}]=await Promise.all([
+    sb.from('customer_balance').select('*'),
+    sb.from('monthly_pnl').select('*')
+  ]);
+  if(e1){ $('main').innerHTML=`<div class="card">Couldn't load dashboard: ${e1.message}</div>`; return; }
   const today=new Date();
-  homeOwing=(data||[]).filter(r=>Number(r.pending)>0)
-    .map(r=>{
-      const days = r.last_delivery
-        ? Math.floor((today - new Date(r.last_delivery))/86400000) : null;
-      return {...r, days};
-    })
-    .sort((a,b)=>b.pending-a.pending);
-  renderHome((data||[]).length);
+  homeAll=(bal||[]).map(r=>{
+    const days=r.last_delivery?Math.floor((today-new Date(r.last_delivery))/86400000):null;
+    return {...r, days, pending:Number(r.pending)};
+  }).sort((a,b)=>b.pending-a.pending);
+  homePnl = e2 ? [] : (pnl||[]);
+  renderHome();
 }
 
-function renderHome(customerCount){
-  const f=homeFilter;
-  const rows = homeOwing.filter(r => f===0 ? true : (r.days!=null && r.days>f));
-  const totalOut=rows.reduce((s,r)=>s+Number(r.pending),0);
-  const btn=(d,lbl)=>`<button class="filt ${homeFilter===d?'on':''}" onclick="setHomeFilter(${d})">${lbl}</button>`;
+function filterRows(){
+  if(homeFilter==='all') return homeAll;
+  if(homeFilter==='pending') return homeAll.filter(r=>r.pending>0);
+  const d = homeFilter==='d10'?10:20;
+  return homeAll.filter(r=>r.pending>0 && r.days!=null && r.days>d);
+}
+
+function renderHome(){
+  const rows=filterRows();
+  const totalOut=homeAll.reduce((s,r)=>s+(r.pending>0?r.pending:0),0);
+  const pnl = homePnl.find(p=>p.month===curMonth()) || {delivered:0,collected:0,costs:0,profit:0};
+  const fb=(key,lbl)=>`<button class="filt ${homeFilter===key?'on':''}" onclick="setHomeFilter('${key}')">${lbl}</button>`;
+  const listHead = homeFilter==='all' ? 'All customers' : 'Pending payments';
   const list = rows.length
-    ? rows.map((r,i)=>`
-        <div class="owe" onclick='openById("${r.customer_id}")'>
+    ? rows.map((r,i)=>{
+        const due=r.pending>0, adv=r.pending<0;
+        const badge = due?`<span class="due">₹${fmt(r.pending)}</span>`
+                    : adv?`<span class="due" style="color:var(--green)">₹${fmt(-r.pending)} adv</span>`
+                    : `<span class="pill paid">Settled</span>`;
+        const meta = due && r.days!=null ? `${r.phone} · ${r.days} day${r.days===1?'':'s'} since last delivery` : r.phone;
+        return `<div class="owe" onclick='openById("${r.customer_id}")'>
           <div><span class="rank">${i+1}.</span><span class="who">${r.name}</span>
-            <div class="meta" style="margin-left:22px">${r.phone}${
-              r.days!=null?` · ${r.days} day${r.days===1?'':'s'} since last delivery`:''}</div></div>
-          <span class="due">₹${fmt(r.pending)}</span>
-        </div>`).join('')
-    : `<div class="empty">${homeFilter?'No one in this range.':'Everyone is settled up. 🎉'}</div>`;
+            <div class="meta" style="margin-left:22px">${meta}</div></div>${badge}</div>`;
+      }).join('')
+    : `<div class="empty">${homeFilter==='all'?'No customers yet. Add one to begin.':'No one in this range.'}</div>`;
+  const m=curMonth();
   $('main').innerHTML=`
     <div class="hero">
-      <label>Outstanding${homeFilter?` (over ${homeFilter} days)`:''}</label>
+      <label>Total outstanding</label>
       <b>₹${fmt(totalOut)}</b>
-      <div class="sub">${rows.length} customer(s)${customerCount!=null?` · ${customerCount} total`:''}</div>
+      <div class="sub">${homeAll.filter(r=>r.pending>0).length} owe money · ${homeAll.length} customers</div>
     </div>
+
+    <div class="card pnl">
+      <div class="dash-head"><h2>This month · ${m}</h2>
+        <button class="btn-ghost" onclick="openExpenses()">Manage costs</button></div>
+      <div class="pnl-grid">
+        <div class="pnl-cell"><label>Delivered</label><b>₹${fmt(pnl.delivered)}</b></div>
+        <div class="pnl-cell"><label>Collected</label><b class="g">₹${fmt(pnl.collected)}</b></div>
+        <div class="pnl-cell"><label>Costs</label><b class="r">₹${fmt(pnl.costs)}</b></div>
+        <div class="pnl-cell"><label>Pending (now)</label><b>₹${fmt(totalOut)}</b></div>
+      </div>
+      <div class="pnl-profit ${Number(pnl.profit)>=0?'pos':'neg'}">
+        <span>Profit (collected − costs)</span>
+        <b>₹${fmt(pnl.profit)}</b>
+      </div>
+      ${homePnl.length>1?`<div class="pnl-hint" onclick="openPnlHistory()">View earlier months →</div>`:''}
+    </div>
+
     <div class="filters">
-      ${btn(0,'All pending')}${btn(10,'Over 10 days')}${btn(20,'Over 20 days')}
+      ${fb('all','All customers')}${fb('pending','Pending')}${fb('d10','Over 10 days')}${fb('d20','Over 20 days')}
     </div>
     <div class="card">
-      <div class="dash-head"><h2>Who owes the most</h2>
+      <div class="dash-head"><h2>${listHead}</h2>
         <button class="btn-ghost" onclick="openNewCustomer()">+ New</button></div>
       ${list}
     </div>`;
 }
-function setHomeFilter(d){ homeFilter=d; renderHome(null); }
+function setHomeFilter(k){ homeFilter=k; renderHome(); }
+
+function openPnlHistory(){
+  const rows=homePnl.map(p=>`
+    <div class="item"><div class="top"><span class="date">${p.month}</span>
+      <span class="amt ${Number(p.profit)>=0?'pay':''}" style="${Number(p.profit)<0?'color:var(--danger)':''}">₹${fmt(p.profit)} profit</span></div>
+    <div class="grid">
+      <div><span>Delivered:</span> ₹${fmt(p.delivered)}</div>
+      <div><span>Collected:</span> ₹${fmt(p.collected)}</div>
+      <div><span>Costs:</span> ₹${fmt(p.costs)}</div>
+    </div></div>`).join('');
+  $('pnlBody').innerHTML=rows||'<p class="empty">No data yet.</p>';
+  pnlDlg.showModal();
+}
 
 async function openById(id){
   const {data}=await sb.from('customers').select('*').eq('id',id).single();
   if(data) viewCustomer(data);
+}
+
+// ---- Expenses ----
+let expCache=[];
+async function openExpenses(){
+  $('expMonth').textContent=curMonth();
+  const {data}=await sb.from('expenses').select('*')
+    .gte('expense_date',curMonth()+'-01').order('expense_date',{ascending:false});
+  expCache=(data||[]).filter(e=>!e.voided_at);
+  renderExpenses(); expDlg.showModal();
+}
+function renderExpenses(){
+  const total=expCache.reduce((s,e)=>s+Number(e.amount),0);
+  $('expTotal').textContent=fmt(total);
+  $('expList').innerHTML = expCache.length
+    ? expCache.map(e=>`<div class="exp-row">
+        <div><b>${e.category}</b> <span class="muted">${e.expense_date}</span>
+          ${e.notes?`<div class="muted" style="font-size:12px">${e.notes}</div>`:''}</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="amt r">₹${fmt(e.amount)}</span>
+          <button class="op void" onclick="voidExpense('${e.id}')">✕</button></div>
+      </div>`).join('')
+    : '<p class="empty">No costs logged this month.</p>';
+}
+async function addExpense(){
+  const category=$('exCat').value, amount=Number($('exAmt').value)||0;
+  if(amount<=0){ alert('Enter an amount'); return; }
+  const {error}=await sb.from('expenses').insert({
+    expense_date:$('exDate').value, category, amount, notes:$('exNotes').value.trim()||null});
+  if(error){ alert(error.message); return; }
+  $('exAmt').value=''; $('exNotes').value='';
+  openExpenses();
+}
+async function voidExpense(id){
+  if(!confirm('Remove this cost entry?')) return;
+  const {error}=await sb.from('expenses').update({voided_at:new Date().toISOString()}).eq('id',id);
+  if(error){ alert(error.message); return; }
+  openExpenses();
 }
 
 initDB();

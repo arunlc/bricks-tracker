@@ -22,6 +22,11 @@ All free: GitHub (hosting + Friday job), Supabase (database), Resend (email).
 ### How deliveries and payments work
 Each **delivery** records bricks × price = what the customer owes. Each **payment** is money received (UPI, Cash, Net Banking…), recorded separately — so a customer can pay in **several installments** over time. The **pending balance** shown everywhere is total delivered minus total paid. Entries can be **edited**, or **voided** (a safe soft-delete that hides them from balances but keeps them recoverable). The Friday email lists everyone whose balance is still above zero, ignoring voided entries.
 
+### Dashboard, costs, and monthly P&L
+The home screen shows total outstanding, a **monthly P&L card** (delivered, collected, costs, profit) for the current month, and a list you can filter four ways: **All customers**, **Pending**, **Over 10 days**, **Over 20 days**. Revenue is counted when money is **collected** (by payment date), and profit = collected − costs. Tap **Manage costs** to log itemised expenses by category (Driver, Fuel, Maintenance, Loading, Rent, Other); these feed the P&L. **View earlier months** shows the P&L history.
+
+> Upgrading an existing database? Run `migrate_v4.sql` once in the Supabase SQL Editor — it adds the expenses table and the monthly views without touching your customer/delivery/payment data.
+
 ---
 
 ## Setup — about 25 minutes, one time
