@@ -99,6 +99,11 @@
   .x{position:absolute;top:14px;right:16px;background:transparent;color:var(--muted);font-size:22px;padding:0;width:30px}
   .banner{background:#fff5f0;border:1px solid #f0d0c0;color:#8a3a18;padding:12px 14px;
     border-radius:10px;font-size:13px;margin:16px auto;max-width:760px}
+  #loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .login-box{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:24px;width:100%;max-width:360px;box-shadow:0 12px 40px rgba(0,0,0,.06)}
+  .login-err{background:#fbeee9;border:1px solid #e7cabf;color:var(--danger);
+    border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
   .dash-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
   .dash-head h2{font-size:16px;margin:0;font-weight:600}
   .hero{background:var(--accent);color:#fff;border-radius:var(--radius);padding:18px;margin-bottom:14px}
@@ -137,9 +142,26 @@
 </head>
 <body>
 
+<div id="loginScreen" style="display:none">
+  <div class="login-box">
+    <h1 style="text-align:center">🧱 Bricks <span style="color:var(--accent)">Tracker</span></h1>
+    <p class="muted" style="text-align:center;margin-top:-4px">Sign in to continue</p>
+    <label class="fld">Email</label>
+    <input class="in" id="liEmail" type="email" inputmode="email" autocomplete="username" placeholder="you@example.com">
+    <label class="fld">Password</label>
+    <input class="in" id="liPass" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()">
+    <div id="liErr" class="login-err" style="display:none"></div>
+    <div style="margin-top:14px"><button class="btn-primary" id="liBtn" onclick="doLogin()">Sign in</button></div>
+  </div>
+</div>
+
+<div id="app" style="display:none">
 <header>
   <div class="wrap">
-    <h1>🧱 Bricks <span>Tracker</span></h1>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h1 onclick="showHome()" style="cursor:pointer">🧱 Bricks <span>Tracker</span></h1>
+      <button class="btn-ghost" onclick="doLogout()" style="font-size:13px;padding:6px 10px">Sign out</button>
+    </div>
     <div class="search">
       <input id="searchBox" placeholder="Search customer by name…" autocomplete="off">
       <div class="results" id="results"></div>
@@ -235,6 +257,7 @@
   <p class="dlg-title">Monthly P&amp;L history</p>
   <div id="pnlBody" style="margin-top:8px"></div>
 </dialog>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
@@ -634,8 +657,43 @@ async function voidExpense(id){
   openExpenses();
 }
 
-initDB();
-showHome();
+// ---- Auth gate ----
+async function boot(){
+  if(!initDB()){
+    // No config: show login area anyway so the cfg banner is visible
+    $('loginScreen').style.display='flex';
+    $('liErr').style.display='block';
+    $('liErr').textContent='App not connected. Set up config.js first (see guide).';
+    return;
+  }
+  const {data}=await sb.auth.getSession();
+  if(data && data.session) enterApp();
+  else $('loginScreen').style.display='flex';
+}
+function enterApp(){
+  $('loginScreen').style.display='none';
+  $('app').style.display='block';
+  showHome();
+}
+async function doLogin(){
+  const email=$('liEmail').value.trim(), password=$('liPass').value;
+  if(!email||!password){ showLoginErr('Enter email and password'); return; }
+  $('liBtn').disabled=true; $('liBtn').textContent='Signing in…'; $('liErr').style.display='none';
+  const {error}=await sb.auth.signInWithPassword({email,password});
+  $('liBtn').disabled=false; $('liBtn').textContent='Sign in';
+  if(error){ showLoginErr(error.message==='Invalid login credentials'?'Wrong email or password':error.message); return; }
+  $('liPass').value='';
+  enterApp();
+}
+function showLoginErr(msg){ $('liErr').style.display='block'; $('liErr').textContent=msg; }
+async function doLogout(){
+  await sb.auth.signOut();
+  $('app').style.display='none';
+  $('loginScreen').style.display='flex';
+  $('liEmail').value=''; $('liPass').value='';
+}
+
+boot();
 </script>
 </body>
 </html>
