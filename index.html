@@ -105,6 +105,10 @@
   .hero label{font-size:13px;opacity:.85;display:block}
   .hero b{font-size:30px;font-weight:700;display:block;margin-top:2px}
   .hero .sub{font-size:13px;opacity:.85;margin-top:6px}
+  .filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+  .filt{flex:1;min-width:90px;padding:9px 10px;font-size:13px;border-radius:10px;
+    border:1px solid var(--line);background:var(--card);color:var(--muted);font-weight:600}
+  .filt.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
   .owe{display:flex;justify-content:space-between;align-items:center;padding:12px 4px;
     border-bottom:1px solid var(--line);cursor:pointer}
   .owe:last-child{border-bottom:none}
@@ -451,28 +455,47 @@ async function restore(type,id){
   viewCustomer(currentCustomer);
 }
 
+let homeOwing=[], homeFilter=0;   // homeFilter = min days pending (0/10/20)
+
 async function showHome(){
-  currentCustomer=null;
+  currentCustomer=null; homeFilter=0;
   if(!sb){ $('main').innerHTML=''; return; }
   $('main').innerHTML='<div class="empty">Loading dashboard…</div>';
   const {data,error}=await sb.from('customer_balance').select('*');
   if(error){ $('main').innerHTML=`<div class="card">Couldn't load dashboard: ${error.message}</div>`; return; }
-  const owing=(data||[]).filter(r=>Number(r.pending)>0).sort((a,b)=>b.pending-a.pending);
-  const totalOut=owing.reduce((s,r)=>s+Number(r.pending),0);
-  const customerCount=(data||[]).length;
-  const list = owing.length
-    ? owing.map((r,i)=>`
+  const today=new Date();
+  homeOwing=(data||[]).filter(r=>Number(r.pending)>0)
+    .map(r=>{
+      const days = r.last_delivery
+        ? Math.floor((today - new Date(r.last_delivery))/86400000) : null;
+      return {...r, days};
+    })
+    .sort((a,b)=>b.pending-a.pending);
+  renderHome((data||[]).length);
+}
+
+function renderHome(customerCount){
+  const f=homeFilter;
+  const rows = homeOwing.filter(r => f===0 ? true : (r.days!=null && r.days>f));
+  const totalOut=rows.reduce((s,r)=>s+Number(r.pending),0);
+  const btn=(d,lbl)=>`<button class="filt ${homeFilter===d?'on':''}" onclick="setHomeFilter(${d})">${lbl}</button>`;
+  const list = rows.length
+    ? rows.map((r,i)=>`
         <div class="owe" onclick='openById("${r.customer_id}")'>
           <div><span class="rank">${i+1}.</span><span class="who">${r.name}</span>
-            <div class="meta" style="margin-left:22px">${r.phone}${r.last_delivery?` · last ${r.last_delivery}`:''}</div></div>
+            <div class="meta" style="margin-left:22px">${r.phone}${
+              r.days!=null?` · ${r.days} day${r.days===1?'':'s'} since last delivery`:''}</div></div>
           <span class="due">₹${fmt(r.pending)}</span>
         </div>`).join('')
-    : '<div class="empty">Everyone is settled up. 🎉</div>';
+    : `<div class="empty">${homeFilter?'No one in this range.':'Everyone is settled up. 🎉'}</div>`;
   $('main').innerHTML=`
     <div class="hero">
-      <label>Total outstanding</label>
+      <label>Outstanding${homeFilter?` (over ${homeFilter} days)`:''}</label>
       <b>₹${fmt(totalOut)}</b>
-      <div class="sub">${owing.length} customer(s) owe money · ${customerCount} total</div>
+      <div class="sub">${rows.length} customer(s)${customerCount!=null?` · ${customerCount} total`:''}</div>
+    </div>
+    <div class="filters">
+      ${btn(0,'All pending')}${btn(10,'Over 10 days')}${btn(20,'Over 20 days')}
     </div>
     <div class="card">
       <div class="dash-head"><h2>Who owes the most</h2>
@@ -480,6 +503,8 @@ async function showHome(){
       ${list}
     </div>`;
 }
+function setHomeFilter(d){ homeFilter=d; renderHome(null); }
+
 async function openById(id){
   const {data}=await sb.from('customers').select('*').eq('id',id).single();
   if(data) viewCustomer(data);

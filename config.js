@@ -7,6 +7,6 @@
 // Row Level Security ON (the setup guide shows the policy).
 // ============================================================
 window.BRICKS_CONFIG = {
-  url: "https://ergrspfgkwijdcrccatn.supabase.co",
-  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVyZ3JzcGZna3dpamRjcmNjYXRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0Njc4NTIsImV4cCI6MjA5ODA0Mzg1Mn0.gGXc5cQAuSMSIvEfnvbfaH-3UUiBJzEvoLlHIGrHBHs"
+  url: "https://YOUR_PROJECT.supabase.co",
+  anonKey: "YOUR_ANON_KEY"
 };
